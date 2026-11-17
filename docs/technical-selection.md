@@ -14,7 +14,7 @@ SnipView 推荐采用以下技术基线：
 - **构建与测试**：CMake、Ninja、Qt Test、CTest。
 - **X11 后端**：XCB、XShm、XRandR、XFixes、EWMH。
 - **Wayland 后端**：Qt D-Bus、XDG Desktop Portal、PipeWire；在支持的合成器上增加 layer-shell 适配。
-- **首版分发**：AppImage；后续补充 Flatpak。
+- **首版分发**：x86_64 与 aarch64 双架构 AppImage，优先各自原生构建；后续补充双架构 Flatpak。
 - **后期可选模块**：OCR、二维码、长截图、录屏，不进入首版核心依赖。
 
 最重要的架构约束是：截图、标注、复制和保存可以形成较统一的跨桌面体验，但置顶贴图、鼠标穿透、全局快捷键和窗口自动识别在 Wayland 下无法保证所有桌面环境行为一致。平台相关代码必须从一开始就与 UI 和图像编辑核心分离。
@@ -132,7 +132,7 @@ AppImage 符合单文件、免安装目标。Qt 库和 Qt 插件需要随包部�
 
 首发建议包含：
 
-- 优先提供 x86_64 包；
+- 同时提供 x86_64 和 aarch64 包，并分别完成原生构建与验收；
 - `--capture`、`--paste`、`--pin <file>` 等 CLI 参数；
 - `.desktop`、图标和用户可选择的登录自启动；
 - 无需安装即可运行的版本。
@@ -299,6 +299,95 @@ AI 工具需要具备以下能力：
 Xvfb、offscreen 可以辅助测试 QWidget 和纯逻辑，但不能替代真实 Wayland 测试。AI 可以自动执行大部分构建和测试，用户仍需参与系统授权弹窗和最终视觉验收。
 
 最低可用组合为：一台 Ubuntu Linux 桌面机、Qt 6、GCC、CMake、Ninja、Git，以及一个能操作该 Linux 项目目录和终端的 AI 工具。准备好后即可从阶段 0 的 Portal/PipeWire 和多屏验证原型开始。
+
+## 12. ARM64 发行策略与开发环境
+
+SnipView 首版建议同时支持 x86_64 和 ARM64（aarch64），暂不支持 32 位 ARM（armhf/ARMv7）。现有 C++/Qt 架构无需另起一套源码，但构建、打包和测试必须增加独立的 ARM64 流程。
+
+### 12.1 发行范围
+
+| 架构 | 文件示例 | 目标设备 |
+|---|---|---|
+| x86_64 | `SnipView-x86_64.AppImage` | Intel/AMD Linux 电脑 |
+| aarch64 | `SnipView-aarch64.AppImage` | ARM64 笔记本、树莓派及其他 ARM64 设备 |
+
+Flatpak 后续同时构建 x86_64 和 aarch64。不得提供仅修改名称、内部仍包含 x86_64 可执行文件或库的 ARM 包。
+
+### 12.2 ARM64 开发环境
+
+推荐增加一套原生 ARM64 构建环境：
+
+- 一台 ARM64 设备，例如树莓派 5、ARM64 笔记本或 ARM64 服务器；
+- 64 位 Linux，以及用于验收的完整 GNOME/KDE 桌面；
+- 与 x86_64 构建环境尽量一致的 GCC、Qt 6、CMake 和 Ninja 版本；
+- 在 ARM64 环境直接编译和打包。
+
+Ubuntu ARM64 上，基础依赖安装命令通常不需要修改包名：
+
+```bash
+sudo apt install \
+  git build-essential cmake ninja-build pkg-config \
+  qt6-base-dev qt6-base-dev-tools \
+  libxcb1-dev libxcb-image0-dev libxcb-shm0-dev \
+  libxcb-randr0-dev libxcb-xfixes0-dev libxcb-keysyms1-dev \
+  libpipewire-0.3-dev libspa-0.2-dev
+```
+
+优先原生编译，不把交叉编译作为首条路线。交叉编译还需要准备 ARM64 sysroot、Qt ARM64 Kit、CMake toolchain 和正确的 pkg-config 路径，会明显增加 AI 构建流程的复杂度。
+
+### 12.3 构建与测试矩阵
+
+| 架构 | 编译器 | 构建类型 | 验证内容 |
+|---|---|---|---|
+| x86_64 | GCC、Clang | Debug/Release | 编译、单元测试、静态检查 |
+| aarch64 | GCC | Debug/Release | 编译、单元测试、AppImage 打包 |
+
+CI 可以使用原生 ARM runner 或自托管 ARM64 机器。QEMU 可以辅助编译和运行非 GUI 测试，但不能证明以下功能在 ARM 桌面正常：
+
+- Portal 授权和截屏；
+- PipeWire/DMA-BUF 图像导入；
+- 多屏与混合缩放；
+- OpenGL/软件渲染；
+- 贴图和全局快捷键；
+- 高分辨率截图时的性能和内存占用。
+
+因此，至少需要一台运行真实桌面环境的 ARM64 设备做发布验收。
+
+### 12.4 架构无关编码要求
+
+Qt、XCB、D-Bus、Portal 和 PipeWire 都不是 x86 专用技术，但代码必须遵守以下约束：
+
+- 不使用 x86 SSE/AVX 指令或 x86 专属库；
+- 图像像素显式使用 `uint8_t` 等固定宽度类型，避免依赖 ARM 与 x86 上 `char` 的默认符号差异；
+- 不假设指针、整数和 `size_t` 永远是某个固定大小；
+- 正确处理 PipeWire 图像的 `stride`，不能把每一行都当成 `width × 4`；
+- DMA-BUF 导入失败时保留 CPU 图像拷贝回退路径；
+- 首版优先 Qt raster/软件渲染，不把特定 GPU 或 OpenGL 扩展作为硬性要求；
+- 所有第三方库和预编译工具都必须提供 aarch64 版本。
+
+首版不引入 OpenCV、ONNX Runtime 和录屏框架，也可以减少 ARM64 二进制依赖、NEON 优化和硬件编码适配工作。
+
+### 12.5 打包检查与发布门槛
+
+ARM64 AppImage 中的以下内容都必须是 aarch64：
+
+- SnipView 可执行文件；
+- Qt 库和 Qt 插件；
+- XCB、PipeWire 等捆绑依赖；
+- AppImage runtime；
+- 辅助工具和资源提取工具。
+
+打包后应在干净的 ARM64 系统检查文件架构：
+
+```bash
+file SnipView-aarch64.AppImage
+file AppRun
+readelf -h snipview
+```
+
+同时验证程序启动、Qt 插件加载、截图、保存、复制和贴图主流程。构建环境的 glibc 版本不得高于项目承诺支持的最低系统版本。
+
+最终采用“x86_64 + aarch64 双架构、各自原生构建、各自真实桌面验收”的发行策略。ARM64 与 x86_64 共用源码，从项目初期纳入持续构建和发布测试。
 
 ## Sources
 
