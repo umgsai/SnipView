@@ -1,0 +1,44 @@
+# IDE 与本地工具
+.idea/
+.vscode/
+.cache/
+*.user
+CMakeUserPresets.json
+
+# CMake 构建产物
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.txt
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+
+# C++ 编译与调试产物
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+*.log
+core
+core.*
+vgcore.*
+
+# 打包产物
+dist/
+AppDir/
+*.AppImage
+*.flatpak
+.flatpak-builder/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
